@@ -1,0 +1,77 @@
+version: "3.9"
+
+services:
+  traefik:
+    image: traefik:v2.5.2
+    restart: always
+    ports:
+      - 80:80
+      - 443:443
+    command:
+      - "--log.level=DEBUG"
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      # Set up LetsEncrypt
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge=true"
+      - "--certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare"
+      - "--certificatesresolvers.letsencrypt.acme.email=${LE_EMAIL}"
+      - "--certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json"
+      # Set up an insecure listener that redirects all traffic to TLS
+      - "--entrypoints.web.address=:80"
+      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
+      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
+      - "--entrypoints.websecure.address=:443"
+      # Set up the TLS configuration for our websecure listener
+      - "--entrypoints.websecure.http.tls=true"
+      - "--entrypoints.websecure.http.tls.certResolver=letsencrypt"
+      - "--entrypoints.websecure.http.tls.domains[0].main=${DOMAIN_NAME}"
+    environment:
+      - "CLOUDFLARE_EMAIL=${CLOUDFLARE_EMAIL}"
+      - "CLOUDFLARE_DNS_API_TOKEN=${CLOUDFLARE_DNS_API_TOKEN}"
+    volumes:
+      - "./certs/letsencrypt:/letsencrypt"
+      - /var/run/docker.sock:/var/run/docker.sock
+
+  wordpress:
+    image: wordpress:5.8.1-php8.0-apache
+    user: "${UID}:${UID}"
+    volumes:
+      - ./public_html:/var/www/html
+    expose:
+      - "80"
+    restart: always
+    environment:
+      WORDPRESS_DB_HOST: db:3306
+      WORDPRESS_DB_USER: "${DB_USER}"
+      WORDPRESS_DB_PASSWORD: "${DB_PASSWORD}"
+      WORDPRESS_DB_NAME: "${DB_NAME}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.wordpress.rule=Host(`${DOMAIN_NAME}`)"
+      - "traefik.http.routers.wordpress.entrypoints=websecure"
+      - "traefik.http.routers.wordpress.tls.certresolver=letsencrypt"
+
+  db:
+    image: mysql:5.7
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "${DB_LOCAL_PORT}:3306"
+    restart: always
+    environment:
+      MYSQL_DATABASE: "${DB_LOCAL_NAME}"
+      MYSQL_USER: "${DB_LOCAL_USER}"
+      MYSQL_PASSWORD: "${DB_LOCAL_PASSWORD}"
+      MYSQL_ROOT_PASSWORD: "${DB_LOCAL_ROOT_PASSWORD}"
+
+  phpmyadmin:
+    image: phpmyadmin
+    restart: always
+    ports:
+      - 10000:80
+    environment:
+      PMA_HOST: "${DB_HOST}"
+
+volumes:
+  db_data:
